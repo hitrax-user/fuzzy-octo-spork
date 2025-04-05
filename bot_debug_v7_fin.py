@@ -1,0 +1,432 @@
+
+import logging
+import re
+import requests
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+
+# Логирование
+import os
+import logging
+
+log_path = os.path.join(os.path.dirname(__file__), "bot.log")
+
+logging.basicConfig(
+       level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    handlers=[
+        logging.FileHandler(log_path, mode="a", encoding="utf-8"),
+        logging.StreamHandler()
+    ]
+)
+
+logging.info("🔥 Логгер инициализирован успешно. Лог-файл: %s", log_path)
+print("📂 Текущая директория запуска:", os.getcwd())
+print("📄 Ожидаемый лог-файл:", log_path)
+
+
+# Google Sheets
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_url("https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit#gid=0").sheet1
+
+BOT_TOKEN = "7645593337:AAHWs1_kIdpUBZkdQxKd_OcN9IEzTC7umVs"
+
+def parse_cian(url):
+    from selenium import webdriver
+    from selenium.webdriver.chrome.options import Options
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.support.ui import WebDriverWait
+    from selenium.webdriver.support import expected_conditions as EC
+    from bs4 import BeautifulSoup
+    import logging
+    import re
+    import json
+
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--window-size=1920,1080")
+    prefs = {"profile.managed_default_content_settings.images": 2}
+    chrome_options.add_experimental_option("prefs", prefs)
+
+    driver = None
+    try:
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get("https://spb.cian.ru")
+
+        try:
+            with open("cookies_cian.json", "r", encoding="utf-8") as f:
+                cookies = json.load(f)
+                for cookie in cookies:
+                    if "domain" in cookie and not (
+                        "cian.ru" in cookie["domain"] or "spb.cian.ru" in cookie["domain"]
+                    ):
+                        continue
+                    try:
+                        driver.add_cookie(cookie)
+                    except Exception as ce:
+                        logging.debug(f"⛔ Ошибка добавления cookie {cookie.get('name')}: {ce}")
+            logging.info("✅ Куки подставлены в браузер")
+        except Exception as e:
+            logging.warning(f"❌ Не удалось загрузить куки: {e}")
+
+        driver.get(url)
+        wait = WebDriverWait(driver, 10)
+        wait.until(EC.presence_of_element_located((By.TAG_NAME, "body")))
+
+        soup = BeautifulSoup(driver.page_source, "html.parser")
+
+        def extract_text(selector):
+            el = soup.select_one(selector)
+            return el.get_text(strip=True) if el else None
+
+        title = extract_text("h1[class*='--title--']")
+        price_raw = extract_text('[data-testid="price-amount"]')
+        price = re.sub(r"[^\d]", "", price_raw or "")
+
+        address_parts = soup.select('a[data-name="AddressItem"]')
+        address_texts = [a.get_text(strip=True) for a in address_parts]
+        address = ", ".join(address_texts)
+        district = next((x for x in address_texts if "р-н" in x), None)
+
+        # Площадь: ищем <p>Общая площадь</p> → следующий <p>
+        area = None
+        for div in soup.select('div[data-name="OfferSummaryInfoItem"]'):
+            label = div.select_one("p")
+            if label and "Общая площадь" in label.text:
+                value = div.select("p")[1].get_text(strip=True)
+                area_match = re.search(r"\d+([.,]\d+)?", value)
+                if area_match:
+                    area = float(area_match.group(0).replace(",", "."))
+                break
+
+        # Этаж
+        floor = None
+        floor_match = soup.find("span", string=re.compile(r"\d+\s+из\s+\d+"))
+        if floor_match:
+            floor = floor_match.get_text(strip=True)
+
+        # Год постройки
+        year = None
+        year_tag = soup.find("p", string=re.compile(r"^\d{4}$"))
+        if year_tag:
+            year = int(year_tag.text.strip())
+
+        # Балкон
+        balcony_tag = soup.find("p", string=re.compile(r"балкон", re.IGNORECASE))
+        balcony = balcony_tag.get_text(strip=True) if balcony_tag else None
+
+        return {
+            "title": title,
+            "address": address,
+            "district": district,
+            "area": area,
+            "year": year,
+            "price": price,
+            "url": url,
+            "balcony": balcony,
+            "floor": floor,
+            "source": "CIAN-Selenium"
+        }
+
+    except Exception as e:
+        logging.exception(f"Ошибка парсинга CIAN через Selenium для {url}: {e}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
+
+
+
+
+# Финальная версия parse_avito с исправленными регулярками и логированием
+
+
+
+def parse_avito(url):
+    chrome_options = Options()
+    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--disable-gpu")
+    chrome_options.add_argument("--no-sandbox")
+    chrome_options.add_argument("--window-size=1920,1080")
+    prefs = {"profile.managed_default_content_settings.images": 2}
+    chrome_options.add_experimental_option("prefs", prefs)
+
+    driver = None
+    try:
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(url)
+        wait = WebDriverWait(driver, 10)
+
+        title = address = price = district = balcony = None
+        area = year = None
+
+        try:
+            title_raw = driver.title
+            title_match = re.match(r"^(.*?)\s*\|", title_raw)
+            if title_match:
+                title = title_match.group(1).strip()
+        except:
+            pass
+
+        try:
+            address = driver.find_element(By.CLASS_NAME, "style-item-address__string-wt61A").text
+        except Exception as e:
+            logging.warning(f"Адрес не найден: {e}")
+
+        try:
+            price_element = driver.find_element(By.CSS_SELECTOR, '[itemprop="price"]')
+            price = price_element.get_attribute("content")
+        except:
+            try:
+                price_raw = driver.find_element(By.CLASS_NAME, "js-item-price").text
+                price = re.sub(r"[^\d]", "", price_raw)
+            except Exception as e:
+                logging.warning(f"Цена не найдена: {e}")
+
+        try:
+            wait.until(EC.presence_of_all_elements_located((By.CSS_SELECTOR, ".params-paramsList__item--2Y20")))
+            all_params = driver.find_elements(By.CSS_SELECTOR, ".params-paramsList__item--2Y20")
+        except Exception as e:
+            logging.warning(f"Ошибка ожидания параметров: {e}")
+            all_params = []
+
+        if all_params:
+            for item in all_params:
+                text = item.text
+                logging.info(f"Параметр: {text}")
+                if "Общая площадь" in text:
+                    match = re.search(r"\d+,\d+|\d+", text)
+                    if match:
+                        area = float(match.group().replace(",", "."))
+                elif "Год постройки" in text or "Год сдачи" in text:
+                    match = re.search(r'\d{4}', text)
+                    if match:
+                        y = int(match.group())
+                        if 1800 <= y <= 2025:
+                            year = y
+                elif "Балкон" in text:
+                    if "нет" in text.lower():
+                        balcony = "нет"
+                    elif "есть" in text.lower() or re.search(r"\d+", text):
+                        balcony = "есть"
+                    else:
+                        parts = text.split(":")
+                        if len(parts) > 1:
+                            balcony = parts[1].strip()
+        else:
+            logging.warning("❗ Не удалось найти параметры через Selenium, пробуем BeautifulSoup")
+            try:
+                soup = BeautifulSoup(driver.page_source, "html.parser")
+                param_items = soup.find_all("li", class_=re.compile("params-paramsList.*"))
+                for item in param_items:
+                    text = item.get_text(strip=True)
+                    logging.info(f"[BS] Параметр: {text}")
+                    if "Общая площадь" in text:
+                        match = re.search(r"\d+,\d+|\d+", text)
+                        if match:
+                            area = float(match.group().replace(",", "."))
+                    elif "Год постройки" in text or "Год сдачи" in text:
+                        match = re.search(r'\d{4}', text)
+                        if match:
+                            y = int(match.group())
+                            if 1800 <= y <= 2025:
+                                year = y
+                    elif "Балкон" in text:
+                        if "нет" in text.lower():
+                            balcony = "нет"
+                        elif "есть" in text.lower() or re.search(r"\d+", text):
+                            balcony = "есть"
+                        else:
+                            parts = text.split(":")
+                            if len(parts) > 1:
+                                balcony = parts[1].strip()
+            except Exception as e_bs:
+                logging.warning(f"BeautifulSoup не помог: {e_bs}")
+
+        if address and "," in address:
+            parts = address.split(",")
+            if len(parts) > 1:
+                district = parts[1].strip()
+
+        return {
+            "title": title,
+            "address": address,
+            "district": district,
+            "area": area,
+            "year": year,
+            "price": price,
+            "url": url,
+            "balcony": balcony
+        }
+
+    except Exception as e:
+        logging.exception(f"Ошибка парсинга Avito для {url}: {e}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
+
+    driver = None
+    try:
+        driver = webdriver.Chrome(options=chrome_options)
+        driver.get(url)
+        wait = WebDriverWait(driver, 10)
+
+        title = address = price = district = balcony = None
+        area = year = None
+
+        try:
+            title_raw = driver.title
+            title_match = re.match(r"^(.*?)\s*\|", title_raw)
+            if title_match:
+                title = title_match.group(1).strip()
+        except:
+            pass
+
+        try:
+            address = driver.find_element(By.CLASS_NAME, "style-item-address__string-wt61A").text
+        except Exception as e:
+            logging.warning(f"Адрес не найден: {e}")
+
+        try:
+            price_element = driver.find_element(By.CSS_SELECTOR, '[itemprop="price"]')
+            price = price_element.get_attribute("content")
+        except:
+            try:
+                price_raw = driver.find_element(By.CLASS_NAME, "js-item-price").text
+                price = re.sub(r"[^\d]", "", price_raw)
+            except Exception as e:
+                logging.warning(f"Цена не найдена: {e}")
+
+        try:
+            wait.until(EC.presence_of_all_elements_located((By.CLASS_NAME, "params-paramsList__item--2Y20")))
+            all_params = driver.find_elements(By.CLASS_NAME, "params-paramsList__item--2Y20")
+            for item in all_params:
+                text = item.text.replace("\xa0", " ")
+                logging.info(f"Параметр: {text}")
+                if "Общая площадь" in text:
+                    match = re.search(r"\d+,\d+|\d+", text)
+                    if match:
+                        area = float(match.group().replace(",", "."))
+                elif "Год постройки" in text or "Год сдачи" in text:
+                    match = re.search(r'\d{4}', text)
+                    if match:
+                        y = int(match.group())
+                        if 1800 <= y <= 2025:
+                            year = y
+                elif "Балкон" in text:
+                    if "нет" in text.lower():
+                        balcony = "нет"
+                    elif "есть" in text.lower() or re.search(r"\d+", text):
+                        balcony = "есть"
+                    else:
+                        parts = text.split(":")
+                        if len(parts) > 1:
+                            balcony = parts[1].strip()
+        except Exception as e:
+            logging.warning(f"Ошибка парсинга параметров: {e}")
+
+        if address and "," in address:
+            parts = address.split(",")
+            if len(parts) > 1:
+                district = parts[1].strip()
+
+        logging.info(f"✅ Распарсили Avito:\n📌 {title}\n🏠 {address}, {district}\n📐 {area} м², 🏗 {year}, 🪟 Балкон: {balcony}\n💰 {price} ₽")
+
+        return {
+            "title": title,
+            "address": address,
+            "district": district,
+            "area": area,
+            "year": year,
+            "price": price,
+            "url": url,
+            "balcony": balcony
+        }
+
+    except Exception as e:
+        logging.exception(f"Ошибка парсинга Avito для {url}: {e}")
+        return None
+    finally:
+        if driver:
+            driver.quit()
+
+
+
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Привет! Отправь ссылку на Avito или CIAN, и я добавлю её в таблицу 📄")
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_message = update.message.text.strip()
+    url = user_message  # ✅ исправлено!
+    chat_id = update.message.chat_id
+
+    logging.info(f"Бот получил ссылку: {user_message}")
+    await update.message.reply_text("📩 Ссылка получена! Сейчас обрабатываю…")
+
+    if "avito.ru" in url:
+        data = parse_avito(url)
+    elif "cian.ru" in url:
+        data = parse_cian(url)
+    else:
+        await update.message.reply_text("Пожалуйста, пришли ссылку с Avito или CIAN 🙏")
+        return
+
+    if not data:
+        await update.message.reply_text("❌ Не удалось обработать ссылку.")
+        return
+
+    message = (
+        f"✅ Добавлено в таблицу!\n"
+        f"📝 Название: {data['title']}\n"
+        f"🏡 Адрес: {data['address']}\n"
+        f"📍 Район: {data['district']}\n"
+        f"📐 Площадь: {data['area']} м²\n"
+        f"🕰 Год: {data['year']}\n"
+        f"💰 Цена: {data['price']} ₽\n"
+        f"🪟 Балкон: {data['balcony']}\n"
+        f"🏢 Этаж: {data['floor']}\n"
+    )
+
+    await update.message.reply_text(message)
+
+    try:
+        sheet.append_row([
+            data["title"],
+            data["address"],
+            data["district"],
+            data["area"],
+            data["year"],
+            data["price"],
+            data["url"],
+            data["balcony"],
+            data["floor"],
+            ""  # комментарий
+        ])
+    except Exception as e:
+        logging.exception(f"Ошибка записи в таблицу для {url}: {e}")
+
+
+
+def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
