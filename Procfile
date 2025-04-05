@@ -1,1 +1,1 @@
-python3 grokcian.py
+web: python3 grokcian.py
