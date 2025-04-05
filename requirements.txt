@@ -1,0 +1,9 @@
+requests
+beautifulsoup4
+python-telegram-bot
+gspread-formatting
+playwright
+gspread
+oauth2client
+gspread-formatting
+bs4
