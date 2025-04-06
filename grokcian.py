@@ -25,32 +25,16 @@ logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram.request").setLevel(logging.WARNING)
 logging.info("🔥 Логгер инициализирован успешно. Лог-файл: %s", log_path)
 
-
 print("📂 Текущая директория запуска:", os.getcwd())
 print("📄 Ожидаемый лог-файл:", log_path)
-# Google Sheets
-scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-# Читаем ключ из файла
-try:
-    with open("/app/service_account.json", "r") as f:
-        creds_dict = json.load(f)
-    logging.info("✅ Успешно загружен service_account.json")
-except Exception as e:
-    logging.error("❌ Не удалось загрузить service_account.json: %s", e)
-    raise
 
-creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
-client = gspread.authorize(creds)
-sheet = client.open_by_url(
-    "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
-).sheet1
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
+# Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = {
     "type": "service_account",
     "project_id": "marine-cable-247015",
     "project_number": "1068635987895",
-    "private_key_id": "0ca9155f4d78af7f56bd533c5ec7180849fafa11",
+    "private_key_id": "4d3a8ece5e3f168a1ad6c94071043b4f96814df0",
     "private_key": os.getenv("GOOGLE_PRIVATE_KEY"),
     "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
     "client_id": "109191276252841949564",
@@ -66,6 +50,7 @@ sheet = client.open_by_url(
     "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
 ).sheet1
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
+
 # Определяем заголовки таблицы
 headers = ["Название", "Адрес", "Район", "Площадь", "Год", "Цена", "Балкон", "Этаж", "Комментарии"]
 if sheet.row_values(1) != headers:
@@ -138,7 +123,7 @@ async def parse_cian_playwright(url):
 
         title = extract_text("h1[class*='--title--']")
         price_raw = extract_text('[data-testid="price-amount"]')
-        price = re.sub(r"[^\d]", "", price_raw or "")
+        price = re.sub(r"[^\d]", "", price_raw or "") if price_raw else ""
 
         address_parts = soup.select('a[data-name="AddressItem"]')
         address_texts = [a.get_text(strip=True) for a in address_parts]
@@ -161,7 +146,7 @@ async def parse_cian_playwright(url):
                 value = spans[1].text.strip()
                 if "Общая площадь" in label:
                     area_text = value.replace("\xa0", " ").replace("м²", "").strip()
-                    area = float(area_text.replace(",", "."))
+                    area = float(area_text.replace(",", ".")) if area_text else None
                 elif "Этаж" in label:
                     floor = value
                 elif "Год" in label and re.match(r"^\d{4}$", value):
