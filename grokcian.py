@@ -35,6 +35,22 @@ print("📄 Ожидаемый лог-файл:", log_path)
 
 # Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+# Читаем ключ из файла
+try:
+    with open("/app/service_account.json", "r") as f:
+        creds_dict = json.load(f)
+    logging.info("✅ Успешно загружен service_account.json")
+except Exception as e:
+    logging.error("❌ Не удалось загрузить service_account.json: %s", e)
+    raise
+
+creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
+client = gspread.authorize(creds)
+sheet = client.open_by_url(
+    "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
+).sheet1
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = {
     "type": "service_account",
     "project_id": "marine-cable-247015",
