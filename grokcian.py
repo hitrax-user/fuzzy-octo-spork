@@ -24,6 +24,12 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram.request").setLevel(logging.WARNING)
 logging.info("🔥 Логгер инициализирован успешно. Лог-файл: %s", log_path)
+# Отладка GOOGLE_PRIVATE_KEY
+full_key = os.getenv("GOOGLE_PRIVATE_KEY")
+if full_key:
+    logging.info("GOOGLE_PRIVATE_KEY: %s", full_key)
+else:
+    logging.error("Переменная GOOGLE_PRIVATE_KEY не установлена!")
 print("📂 Текущая директория запуска:", os.getcwd())
 print("📄 Ожидаемый лог-файл:", log_path)
 
