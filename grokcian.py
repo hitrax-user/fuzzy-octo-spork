@@ -127,6 +127,22 @@ async def get_or_launch_browser():
             return None
     return _browser
 
+async def get_or_launch_browser():
+    global _playwright, _browser
+    if _browser is None or not _browser.is_connected():
+        logging.debug("Запуск нового браузера через Playwright")
+        try:
+            if _playwright is None:
+                _playwright = await async_playwright().start()
+            # Добавляем --no-sandbox для обхода проблем в контейнерах
+            _browser = await _playwright.chromium.launch(headless=True, args=["--no-sandbox"])
+            logging.info("Браузер успешно запущен")
+        except Exception as e:
+            logging.error(f"Ошибка запуска браузера: {e}")
+            _browser = None
+            return None
+    return _browser
+
 async def parse_cian_playwright(url):
     logging.info(f"Начинаю парсинг ссылки: {url}")
     browser = await get_or_launch_browser()
@@ -136,11 +152,12 @@ async def parse_cian_playwright(url):
 
     logging.debug("Создаю новую страницу")
     try:
+        # Увеличиваем тайм-аут до 60 секунд
         page = await asyncio.wait_for(
             browser.new_page(
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
             ),
-            timeout=30
+            timeout=60
         )
         logging.info("Новая страница создана")
     except asyncio.TimeoutError:
@@ -150,6 +167,7 @@ async def parse_cian_playwright(url):
         logging.error(f"Ошибка создания страницы: {e}")
         return None
 
+    # Остальной код остаётся без изменений
     logging.info("Загружаю начальную страницу ЦИАН...")
     try:
         await asyncio.wait_for(
