@@ -566,10 +566,32 @@ async def main():
     # Запуск health check сервера
     await init_health_server()
 
-    # Запуск бота в режиме polling
+    # Инициализация приложения
+    await application.initialize()
+    logging.info("Бот инициализирован")
+
+    # Запуск polling
     logging.info("Бот запущен и готов к работе!")
-    await application.run_polling()
+    await application.start()
+    await application.updater.start_polling()
+
+    # Держим приложение работающим
+    try:
+        await asyncio.Event().wait()  # Бесконечное ожидание
+    except KeyboardInterrupt:
+        logging.info("Получен сигнал завершения")
+    finally:
+        # Корректное завершение
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+        logging.info("Бот остановлен")
 
 # Точка входа
 if __name__ == "__main__":
-    asyncio.run(main())  # Стандартный запуск без nest_asyncio
+    # Создаём цикл событий вручную
+    loop = asyncio.get_event_loop()
+    try:
+        loop.run_until_complete(main())
+    finally:
+        loop.close()
