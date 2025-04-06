@@ -150,8 +150,8 @@ async def get_or_launch_browser():
         try:
             if _playwright is None:
                 _playwright = await async_playwright().start()
-            # Включаем dumpio для вывода логов Chromium
-            _browser = await _playwright.chromium.launch(headless=True, args=["--no-sandbox"], dumpio=True)
+            # Убираем dumpio, оставляем --no-sandbox
+            _browser = await _playwright.chromium.launch(headless=True, args=["--no-sandbox"])
             logging.info("Браузер успешно запущен")
         except Exception as e:
             logging.error(f"Ошибка запуска браузера: {e}")
