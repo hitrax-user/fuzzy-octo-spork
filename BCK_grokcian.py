@@ -102,12 +102,10 @@ async def parse_cian_playwright(url):
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         )
         
-        logging.info("Загружаю начальную страницу ЦИАН...")
+        logging.info(f"Загружаю начальную страницу ЦИАН...")
         await page.goto("https://spb.cian.ru", wait_until="domcontentloaded")
         try:
-            # Читаем куки из файла
-            with open("/app/files/cian-cookie.json", "r", encoding="utf-8") as f:
-                cookies_cian = json.load(f)
+            cookies_cian = json.loads(os.getenv("COOKIES_CIAN", "[]"))
             await page.context.add_cookies(cookies_cian)
             logging.info("✅ Куки подставлены в браузер для CIAN")
         except Exception as e:
@@ -185,7 +183,6 @@ async def parse_cian_playwright(url):
         }
 
 
-
 async def parse_avito_playwright(url):
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
@@ -193,17 +190,17 @@ async def parse_avito_playwright(url):
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
         )
         
+        # Загружаем главную страницу Avito для установки куки
         logging.info("Загружаю начальную страницу Avito...")
         await page.goto("https://www.avito.ru", wait_until="domcontentloaded")
         try:
-            # Читаем куки для Авито из файла
-            with open("/app/files/avito-cookie.json", "r", encoding="utf-8") as f:
-                cookies_avito = json.load(f)
+            cookies_avito = json.loads(os.getenv("COOKIES_AVITO", "[]"))
             await page.context.add_cookies(cookies_avito)
-            logging.info("✅ Куки подставлены в браузер для Avито")
+            logging.info("✅ Куки подставлены в браузер для Avito")
         except Exception as e:
-            logging.warning(f"❌ Не удалось загрузить куки для Авито: {e}")
+            logging.warning(f"❌ Не удалось загрузить куки для Avito: {e}")
 
+        # Переходим на страницу объявления
         logging.info(f"Загружаю страницу: {url}")
         await page.goto(url, wait_until="domcontentloaded")
         try:
