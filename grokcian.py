@@ -412,6 +412,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=inline_keyboard
     )
 
+    # Проверяем, работает ли приложение
+    if not context.application.running:
+        await update.message.reply_text(
+            f"❌ Бот остановлен. Попробуйте позже.\n"
+            f"Таблица: <a href='{SHEET_URL}'>Google Sheets</a>",
+            parse_mode="HTML",
+            reply_markup=inline_keyboard
+        )
+        return
+
     if "avito.ru" in url:
         data = await parse_avito_playwright(url)
     elif "cian.ru" in url:
@@ -427,7 +437,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not data:
         await update.message.reply_text(
-            f"❌ Не удалось обработать ссылку.\n"
+            f"❌ Не удалось обработать ссылку. Проверьте логи или попробуйте позже.\n"
             f"Таблица: <a href='{SHEET_URL}'>Google Sheets</a>",
             parse_mode="HTML",
             reply_markup=inline_keyboard
