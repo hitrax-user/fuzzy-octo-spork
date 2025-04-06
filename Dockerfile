@@ -24,7 +24,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     libfontconfig1 \
     libfreetype6 \
-    # Дополнительные утилиты для установки
+    # Дополнительные зависимости для стабильности
+    libxtst6 \
+    libxfixes3 \
+    libnspr4 \
+    libpangocairo-1.0-0 \
+    libatspi2.0-0 \
+    # Утилиты для установки
     wget \
     gnupg \
     apt-transport-https \

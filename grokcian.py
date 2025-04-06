@@ -120,141 +120,152 @@ inline_keyboard = InlineKeyboardMarkup([
     [InlineKeyboardButton("Показать таблицу", callback_data="table")]
 ])
 
+# Глобальная переменная для хранения браузера
+_browser = None
+
+async def get_or_launch_browser():
+    global _browser
+    if _browser is None or not _browser.is_connected():
+        logging.debug("Запуск нового браузера через Playwright")
+        try:
+            async with async_playwright() as p:
+                _browser = await p.chromium.launch(headless=True)
+                logging.info("Браузер успешно запущен")
+        except Exception as e:
+            logging.error(f"Ошибка запуска браузера: {e}")
+            _browser = None
+            return None
+    return _browser
+
 # Парсинг объявлений с ЦИАН через Playwright
 async def parse_cian_playwright(url):
     logging.info(f"Начинаю парсинг ссылки: {url}")
-    async with async_playwright() as p:
-        logging.debug("Запуск браузера через Playwright")
-        try:
-            browser = await p.chromium.launch(headless=True)
-            logging.info("Браузер успешно запущен")
-        except Exception as e:
-            logging.error(f"Ошибка запуска браузера: {e}")
-            return None
+    browser = await get_or_launch_browser()
+    if browser is None:
+        logging.error("Не удалось получить или запустить браузер")
+        return None
 
-        logging.debug("Создаю новую страницу")
-        try:
-            page = await asyncio.wait_for(
-                browser.new_page(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-                ),
-                timeout=30  # Тайм-аут 30 секунд
-            )
-            logging.info("Новая страница создана")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при создании новой страницы")
-            await browser.close()
-            return None
-        except Exception as e:
-            logging.error(f"Ошибка создания страницы: {e}")
-            await browser.close()
-            return None
+    logging.debug("Создаю новую страницу")
+    try:
+        page = await asyncio.wait_for(
+            browser.new_page(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+            ),
+            timeout=30
+        )
+        logging.info("Новая страница создана")
+    except asyncio.TimeoutError:
+        logging.error("Тайм-аут при создании новой страницы")
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка создания страницы: {e}")
+        return None
 
-        logging.info("Загружаю начальную страницу ЦИАН...")
-        try:
-            await asyncio.wait_for(
-                page.goto("https://spb.cian.ru", wait_until="domcontentloaded"),
-                timeout=60
-            )
-            logging.info("Начальная страница загружена")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при загрузке начальной страницы ЦИАН")
-            await browser.close()
-            return None
-        except Exception as e:
-            logging.error(f"Ошибка загрузки начальной страницы: {e}")
-            await browser.close()
-            return None
+    logging.info("Загружаю начальную страницу ЦИАН...")
+    try:
+        await asyncio.wait_for(
+            page.goto("https://spb.cian.ru", wait_until="domcontentloaded"),
+            timeout=60
+        )
+        logging.info("Начальная страница загружена")
+    except asyncio.TimeoutError:
+        logging.error("Тайм-аут при загрузке начальной страницы ЦИАН")
+        await page.close()
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка загрузки начальной страницы: {e}")
+        await page.close()
+        return None
 
-        try:
-            with open("/app/files/cian-cookie.json", "r", encoding="utf-8") as f:
-                cookies_cian = json.load(f)
-            await page.context.add_cookies(cookies_cian)
-            logging.info("✅ Куки подставлены в браузер для CIAN")
-        except Exception as e:
-            logging.warning(f"❌ Не удалось загрузить куки для CIAN: {e}")
+    try:
+        with open("/app/files/cian-cookie.json", "r", encoding="utf-8") as f:
+            cookies_cian = json.load(f)
+        await page.context.add_cookies(cookies_cian)
+        logging.info("✅ Куки подставлены в браузер для CIAN")
+    except Exception as e:
+        logging.warning(f"❌ Не удалось загрузить куки для CIAN: {e}")
 
-        logging.info(f"Загружаю страницу объявления: {url}")
-        try:
-            await asyncio.wait_for(
-                page.goto(url, wait_until="domcontentloaded"),
-                timeout=60
-            )
-            await asyncio.wait_for(
-                page.wait_for_selector("h1[class*='--title--']"),
-                timeout=30
-            )
-            logging.info("Страница объявления загружена")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при загрузке страницы объявления")
-            await browser.close()
-            return None
-        except Exception as e:
-            logging.error(f"Ошибка загрузки страницы объявления: {e}")
-            await browser.close()
-            return None
+    logging.info(f"Загружаю страницу объявления: {url}")
+    try:
+        await asyncio.wait_for(
+            page.goto(url, wait_until="domcontentloaded"),
+            timeout=60
+        )
+        await asyncio.wait_for(
+            page.wait_for_selector("h1[class*='--title--']"),
+            timeout=30
+        )
+        logging.info("Страница объявления загружена")
+    except asyncio.TimeoutError:
+        logging.error("Тайм-аут при загрузке страницы объявления")
+        await page.close()
+        return None
+    except Exception as e:
+        logging.error(f"Ошибка загрузки страницы объявления: {e}")
+        await page.close()
+        return None
 
-        logging.debug("Получаю HTML контент")
-        html_content = await page.content()
-        soup = BeautifulSoup(html_content, "html.parser")
-        logging.debug("Начало HTML страницы (500 символов): %s", soup.prettify()[:500])
+    logging.debug("Получаю HTML контент")
+    html_content = await page.content()
+    soup = BeautifulSoup(html_content, "html.parser")
+    logging.debug("Начало HTML страницы (500 символов): %s", soup.prettify()[:500])
 
-        # Функция для извлечения текста по селектору
-        def extract_text(selector):
-            el = soup.select_one(selector)
-            result = el.get_text(strip=True) if el else None
-            logging.debug("Результат извлечения по селектору '%s': %s", selector, result)
-            return result
+    # Функция для извлечения текста по селектору
+    def extract_text(selector):
+        el = soup.select_one(selector)
+        result = el.get_text(strip=True) if el else None
+        logging.debug("Результат извлечения по селектору '%s': %s", selector, result)
+        return result
 
-        title = extract_text("h1[class*='--title--']")
-        price_raw = extract_text('[data-testid="price-amount"]')
-        price = re.sub(r"[^\d]", "", price_raw or "") if price_raw else ""
-        address_parts = soup.select('a[data-name="AddressItem"]')
-        address_texts = [a.get_text(strip=True) for a in address_parts]
-        address = None
-        for i, part in enumerate(address_texts):
-            if "ул." in part or "пр." in part or "наб." in part:
-                if i + 1 < len(address_texts) and re.search(r"\d", address_texts[i + 1]):
-                    address = f"{part}, {address_texts[i + 1]}"
-                else:
-                    address = part
-                break
-        district = next((x for x in address_texts if "р-н" in x), None)
+    title = extract_text("h1[class*='--title--']")
+    price_raw = extract_text('[data-testid="price-amount"]')
+    price = re.sub(r"[^\d]", "", price_raw or "") if price_raw else ""
+    address_parts = soup.select('a[data-name="AddressItem"]')
+    address_texts = [a.get_text(strip=True) for a in address_parts]
+    address = None
+    for i, part in enumerate(address_texts):
+        if "ул." in part or "пр." in part or "наб." in part:
+            if i + 1 < len(address_texts) and re.search(r"\d", address_texts[i + 1]):
+                address = f"{part}, {address_texts[i + 1]}"
+            else:
+                address = part
+            break
+    district = next((x for x in address_texts if "р-н" in x), None)
 
-        area = year = balcony = floor = None
-        info_divs = soup.select("div[class*='a10a3f92e9--text']")
-        for div in info_divs:
-            spans = div.find_all("span")
-            if len(spans) >= 2:
-                label = spans[0].text.strip()
-                value = spans[1].text.strip()
-                logging.debug("Найдена характеристика: %s -> %s", label, value)
-                if "Общая площадь" in label:
-                    area_text = value.replace("\xa0", " ").replace("м²", "").strip()
-                    area = float(area_text.replace(",", ".")) if area_text else None
-                elif "Этаж" in label:
-                    floor = value
-                elif "Год" in label and re.match(r"^\d{4}$", value):
-                    y_val = int(value)
-                    if 1800 <= y_val <= 2100:
-                        year = y_val
-                elif "балкон" in label.lower():
-                    balcony = value
+    area = year = balcony = floor = None
+    info_divs = soup.select("div[class*='a10a3f92e9--text']")
+    for div in info_divs:
+        spans = div.find_all("span")
+        if len(spans) >= 2:
+            label = spans[0].text.strip()
+            value = spans[1].text.strip()
+            logging.debug("Найдена характеристика: %s -> %s", label, value)
+            if "Общая площадь" in label:
+                area_text = value.replace("\xa0", " ").replace("м²", "").strip()
+                area = float(area_text.replace(",", ".")) if area_text else None
+            elif "Этаж" in label:
+                floor = value
+            elif "Год" in label and re.match(r"^\d{4}$", value):
+                y_val = int(value)
+                if 1800 <= y_val <= 2100:
+                    year = y_val
+            elif "балкон" in label.lower():
+                balcony = value
 
-        await browser.close()
-        logging.info("Парсинг завершен успешно")
-        return {
-            "title": title,
-            "address": address,
-            "district": district,
-            "area": area,
-            "year": year,
-            "price": price,
-            "url": url,
-            "balcony": balcony,
-            "floor": floor,
-            "source": "CIAN-Playwright"
-        }
+    await page.close()
+    logging.info("Парсинг завершен успешно")
+    return {
+        "title": title,
+        "address": address,
+        "district": district,
+        "area": area,
+        "year": year,
+        "price": price,
+        "url": url,
+        "balcony": balcony,
+        "floor": floor,
+        "source": "CIAN-Playwright"
+    }
 # Парсинг объявлений с Авито через Playwright
 async def parse_avito_playwright(url):
     logging.info(f"Начинаю парсинг ссылки: {url}")
