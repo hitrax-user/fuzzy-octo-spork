@@ -493,15 +493,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=inline_keyboard
         )
 
-def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("table", table_command))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    app.add_handler(CallbackQueryHandler(handle_callback))
+import asyncio
+from aiohttp import web
+
+
+async def handle_health(request):
+    return web.Response(text="OK")
+
+async def init_health_server():
+    app = web.Application()
+    app.router.add_get("/", handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, host="0.0.0.0", port=8000)
+    await site.start()
+    logging.info("Health check server started on port 8000")
+    return runner
+
+async def main():
+    # Создаём экземпляр приложения Telegram-бота
+    application = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    # Добавляем обработчики (start, table, handle_message, handle_callback)
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("table", table_command))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    application.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Запускаем HTTP-сервер для health check
+    await init_health_server()
+
+    # Запускаем бот (run_polling блокирует выполнение, поэтому это последний вызов)
     logging.info("Бот запущен и готов к работе!")
-    app.run_polling()
-    logging.info("Бот завершил работу (это не должно произойти в норме)")
+    await application.run_polling()
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
