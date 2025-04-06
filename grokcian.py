@@ -1,14 +1,14 @@
 import logging
 import re
+import os
+import json
 from bs4 import BeautifulSoup
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes, CallbackQueryHandler
 import gspread
-from oauth2client.service_account import ServiceAccountCredentials
+from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 from gspread_formatting import *
-import os
-import json
 
 # Логирование
 log_path = os.path.join(os.path.dirname(__file__), "bot.log")
@@ -29,13 +29,26 @@ print("📄 Ожидаемый лог-файл:", log_path)
 
 # Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+creds_dict = {
+    "type": "service_account",
+    "project_id": "marine-cable-247015",
+    "project_number": "1068635987895",
+    "private_key_id": "0ca9155f4d78af7f56bd533c5ec7180849fafa11",
+    "private_key": os.getenv("GOOGLE_PRIVATE_KEY"),
+    "client_email": os.getenv("GOOGLE_CLIENT_EMAIL"),
+    "client_id": "109191276252841949564",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
+    "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/formybot%40marine-cable-247015.iam.gserviceaccount.com",
+    "universe_domain": "googleapis.com"
+}
+creds = Credentials.from_service_account_info(creds_dict, scopes=scope)
 client = gspread.authorize(creds)
 sheet = client.open_by_url(
-    "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit#gid=0"
+    "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
 ).sheet1
-SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit#gid=0"
-
+SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
 # Определяем заголовки таблицы
 headers = ["Название", "Адрес", "Район", "Площадь", "Год", "Цена", "Балкон", "Этаж", "Комментарии"]
 if sheet.row_values(1) != headers:
@@ -47,7 +60,13 @@ if sheet.row_values(1) != headers:
         textFormat=TextFormat(bold=True, fontSize=12, foregroundColor=Color(1, 1, 1)),  # Белый жирный текст
         horizontalAlignment="CENTER",
         verticalAlignment="MIDDLE",
-        wrapStrategy="WRAP"
+        wrapStrategy="WRAP",
+        borders=Borders(
+            top=Border("SOLID", Color(0, 0, 0)),
+            bottom=Border("SOLID", Color(0, 0, 0)),
+            left=Border("SOLID", Color(0, 0, 0)),
+            right=Border("SOLID", Color(0, 0, 0))
+        )
     )
     format_cell_range(sheet, "A1:I1", header_format)
 
@@ -62,7 +81,10 @@ if sheet.row_values(1) != headers:
     set_column_width(sheet, "H", 80)   # Этаж
     set_column_width(sheet, "I", 150)  # Комментарии
 
-BOT_TOKEN = "7645593337:AAHWs1_kIdpUBZkdQxKd_OcN9IEzTC7umVs"
+    # Замораживаем первую строку (заголовки)
+    set_frozen(sheet, rows=1)
+
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
 # Inline-кнопки
 inline_keyboard = InlineKeyboardMarkup([
@@ -80,12 +102,11 @@ async def parse_cian_playwright(url):
         logging.info(f"Загружаю начальную страницу ЦИАН...")
         await page.goto("https://spb.cian.ru", wait_until="domcontentloaded")
         try:
-            with open("cookies_cian.json", "r", encoding="utf-8") as f:
-                cookies = json.load(f)
-                await page.context.add_cookies(cookies)
-            logging.info("✅ Куки подставлены в браузер")
+            cookies_cian = json.loads(os.getenv("COOKIES_CIAN", "[]"))
+            await page.context.add_cookies(cookies_cian)
+            logging.info("✅ Куки подставлены в браузер для CIAN")
         except Exception as e:
-            logging.warning(f"❌ Не удалось загрузить куки: {e}")
+            logging.warning(f"❌ Не удалось загрузить куки для CIAN: {e}")
 
         logging.info(f"Загружаю страницу: {url}")
         await page.goto(url, wait_until="domcontentloaded")
@@ -158,12 +179,8 @@ async def parse_avito_playwright(url):
         logging.info("Загружаю начальную страницу Avito...")
         await page.goto("https://www.avito.ru", wait_until="domcontentloaded")
         try:
-            with open("cookies_avito.json", "r", encoding="utf-8") as f:
-                cookies = json.load(f)
-                for cookie in cookies:
-                    if "domain" in cookie and not ("avito.ru" in cookie["domain"]):
-                        continue
-                    await page.context.add_cookies([cookie])
+            cookies_avito = json.loads(os.getenv("COOKIES_AVITO", "[]"))
+            await page.context.add_cookies(cookies_avito)
             logging.info("✅ Куки подставлены в браузер для Avito")
         except Exception as e:
             logging.warning(f"❌ Не удалось загрузить куки для Avito: {e}")
@@ -268,29 +285,80 @@ def is_duplicate_link_or_address(sheet, url, address):
     return False
 
 async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
+    logging.info("Вызвана команда table_command")
+    # Проверяем, откуда вызвана команда: через сообщение или callback
+    message = update.message if update.message else update.callback_query.message
+    args = context.args if context.args is not None else []
+
+    # Получаем текущую страницу из user_data или устанавливаем 0
+    user_data = context.user_data
+    current_page = user_data.get('table_page', 0)
+
+    # Определяем количество записей на страницу
+    records_per_page = 5
+
     values = sheet.get_all_values()
     if not values:
-        await update.message.reply_text("Таблица пуста!", reply_markup=inline_keyboard)
+        await message.reply_text("Таблица пуста!", reply_markup=inline_keyboard)
         return
 
-    table_text = ["<b>Последние записи в таблице:</b>"]
-    start_row = max(1, len(values) - 4) if "full" not in args else 1
-    for row in values[start_row-1:]:
+    # Вычисляем общее количество страниц
+    total_records = len(values) - 1  # Исключаем заголовок
+    total_pages = (total_records + records_per_page - 1) // records_per_page
+
+    # Проверяем, запрошена ли полная таблица
+    if "full" in args:
+        start_row = 1
+        end_row = total_records
+        current_page = 0
+    else:
+        # Вычисляем диапазон записей для текущей страницы
+        start_row = current_page * records_per_page + 1
+        end_row = min(start_row + records_per_page - 1, total_records)
+
+    # Формируем заголовок таблицы
+    table_text = ["<b>📊 Записи в таблице:</b>"]
+    table_text.append("┌──────────────┬────────────────────┬──────────────┬──────┬──────┬──────────┬──────────┬──────┐")
+    table_text.append(
+        "│ Назв         │ Адр                │ Р-н          │ Пл   │ Год  │ Цена     │ Бал      │ Эт   │"
+    )
+    table_text.append("├──────────────┼────────────────────┼──────────────┼──────┼──────┼──────────┼──────────┼──────┤")
+
+    # Отображаем записи для текущей страницы
+    for idx, row in enumerate(values[start_row:end_row+1], start=start_row):
+        title = row[0][:12] + "..." if len(row[0]) > 12 else row[0]
+        address = row[1][:16] + "..." if len(row[1]) > 16 else row[1]
+        district = row[2][:12] + "..." if len(row[2]) > 12 else row[2]
+        area = str(row[3])[:5] if row[3] else "N/A"
+        year = str(row[4])[:4] if row[4] else "N/A"
+        price = str(row[5])[:8] if row[5] else "N/A"
+        balcony = str(row[6])[:8] if row[6] else "N/A"
+        floor = str(row[7])[:5] if row[7] else "N/A"
+
         formatted_row = (
-            f"Назв: {row[0][:15]:<15} | "
-            f"Адр: {row[1]:<20} | "
-            f"Р-н: {row[2]:<15} | "
-            f"Пл: {str(row[3]):<6} | "
-            f"Год: {str(row[4]):<6} | "
-            f"Цена: {str(row[5]):<10} | "
-            f"Бал: {str(row[6]):<10} | "
-            f"Эт: {str(row[7]):<10}"
+            f"│ {title:<12} │ {address:<18} │ {district:<12} │ {area:<4} │ {year:<4} │ {price:<8} │ {balcony:<8} │ {floor:<4} │"
         )
-        table_text.append(f"<pre>{formatted_row}</pre>")
-    if "full" not in args:
-        table_text.append("<i>Для полной таблицы используйте /table full</i>")
-    await update.message.reply_text("\n".join(table_text), parse_mode="HTML", reply_markup=inline_keyboard)
+        table_text.append(formatted_row)
+
+    table_text.append("└──────────────┴────────────────────┴──────────────┴──────┴──────┴──────────┴──────────┴──────┘")
+    table_text.append(f"<i>Страница {current_page + 1} из {total_pages}</i>")
+
+    # Формируем кнопки пагинации
+    pagination_buttons = []
+    if current_page > 0:
+        pagination_buttons.append(InlineKeyboardButton("⬅️ Предыдущие 5", callback_data=f"table_prev_{current_page}"))
+    if end_row < total_records:
+        pagination_buttons.append(InlineKeyboardButton("Следующие 5 ➡️", callback_data=f"table_next_{current_page}"))
+
+    # Добавляем стандартные кнопки
+    buttons = [
+        [InlineKeyboardButton("Начать", callback_data="start")],
+        [InlineKeyboardButton("Показать таблицу", callback_data="table")]
+    ]
+    if pagination_buttons:
+        buttons.insert(1, pagination_buttons)
+
+    await message.reply_text("\n".join(table_text), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
@@ -302,6 +370,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    logging.info(f"Callback data: {query.data}")
     if query.data == "start":
         welcome_message = (
             f"Привет! Отправь ссылку на Avito или CIAN\n"
@@ -309,6 +378,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         await query.message.reply_text(welcome_message, parse_mode="HTML", reply_markup=inline_keyboard)
     elif query.data == "table":
+        await table_command(update, context)
+    elif query.data.startswith("table_prev_"):
+        current_page = int(query.data.split("_")[2])
+        context.user_data['table_page'] = max(0, current_page - 1)
+        await table_command(update, context)
+    elif query.data.startswith("table_next_"):
+        current_page = int(query.data.split("_")[2])
+        context.user_data['table_page'] = current_page + 1
         await table_command(update, context)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -395,7 +472,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 textFormat=TextFormat(fontSize=10),
                 horizontalAlignment="LEFT",
                 verticalAlignment="MIDDLE",
-                wrapStrategy="WRAP"
+                wrapStrategy="WRAP",
+                borders=Borders(
+                    top=Border("SOLID", Color(0, 0, 0)),
+                    bottom=Border("SOLID", Color(0, 0, 0)),
+                    left=Border("SOLID", Color(0, 0, 0)),
+                    right=Border("SOLID", Color(0, 0, 0))
+                )
             )
             format_cell_range(sheet, row_range, row_format)
 

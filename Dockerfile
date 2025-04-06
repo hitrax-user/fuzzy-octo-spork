@@ -1,5 +1,5 @@
-# 1) Базовый образ c Python 3.10 (slim-версия)
-FROM python:3.10-slim
+# 1) Базовый образ c Python 3.11 (slim-версия)
+FROM python:3.11-slim
 
 # 2) Устанавливаем системные библиотеки, нужные для Chromium (Playwright)
 RUN apt-get update && apt-get install -y \
@@ -14,7 +14,7 @@ WORKDIR /app
 
 # 4) Скопируем файл requirements.txt в контейнер и установим питон-пакеты
 COPY requirements.txt /app/requirements.txt
-RUN pip3 install --no-cache-dir -r requirements.txt
+RUN pip3 install --no-cache-dir -r requirements.txt && pip3 install playwright && playwright install chromium
 
 # 5) Устанавливаем движок Chromium для Playwright
 #    (playwright install --with-deps chromium) иногда не нужно, 
@@ -25,5 +25,5 @@ RUN playwright install chromium
 # 6) Скопируем остальные файлы бота в контейнер
 COPY . /app
 
-# 7) Запуск бота, предполагая, что главный файл - grokcian.py
+# 7) Запуск бота
 CMD ["python3", "grokcian.py"]

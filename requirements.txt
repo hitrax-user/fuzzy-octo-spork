@@ -1,9 +1,10 @@
 requests
 beautifulsoup4
 python-telegram-bot
-gspread-formatting
-playwright
 gspread
-oauth2client
+playwright
 gspread-formatting
-bs4
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+google-api-python-client
