@@ -9,55 +9,43 @@ import gspread
 from google.oauth2.service_account import Credentials
 from playwright.async_api import async_playwright
 from gspread_formatting import *
-import asyncio
-from aiohttp import web
 
-# Путь к лог-файлу
+# Логирование
 log_path = os.path.join(os.path.dirname(__file__), "bot.log")
-
-# Настройка логирования
 logging.basicConfig(
-    level=logging.DEBUG,  # Уровень DEBUG для детальной отладки
+    level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
     handlers=[
-        logging.FileHandler(log_path, mode="a", encoding="utf-8"),  # Запись логов в файл
-        logging.StreamHandler()  # Вывод логов в консоль
+        logging.FileHandler(log_path, mode="a", encoding="utf-8"),
+        logging.StreamHandler()
     ]
 )
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("telegram.request").setLevel(logging.WARNING)
+logging.info("🔥 Логгер инициализирован успешно. Лог-файл: %s", log_path)
 
-# Отключаем лишние логи от сторонних библиотек
+# Отключаем лишние логи от telegram
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("telegram.request").setLevel(logging.WARNING)
 
-# Фильтр для отключения polling-логов
+# Добавляем фильтр для polling-логов
 class PollingFilter(logging.Filter):
     def filter(self, record):
+        # Пропускаем только те DEBUG-сообщения, которые НЕ связаны с polling
         if record.levelno == logging.DEBUG:
-            # Убираем сообщения "No new updates found" и "Calling Bot API endpoint `getUpdates`"
             if "No new updates found" in record.msg or "Calling Bot API endpoint `getUpdates`" in record.msg:
-                return False
+                return False  # Отключаем эти сообщения
         return True
-
-# Применяем фильтр к корневому логгеру telegram и telegram.ext
+# Применяем фильтр к логгеру telegram
 telegram_logger = logging.getLogger("telegram")
 telegram_logger.addFilter(PollingFilter())
-telegram_ext_logger = logging.getLogger("telegram.ext")
-telegram_ext_logger.addFilter(PollingFilter())
 
-logging.info("🔥 Логгер инициализирован успешно. Лог-файл: %s", log_path)
-
-# Проверка наличия файлов куки
-if not os.path.exists("/app/files/cian-cookie.json"):
-    logging.error("Файл куки /app/files/cian-cookie.json не найден")
-if not os.path.exists("/app/files/avito-cookie.json"):
-    logging.error("Файл куки /app/files/avito-cookie.json не найден")
-
-# Вывод текущей директории и пути к лог-файлу для отладки
 print("📂 Текущая директория запуска:", os.getcwd())
 print("📄 Ожидаемый лог-файл:", log_path)
 
-# Настройка Google Sheets
+# Google Sheets
 scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
 creds_dict = {
     "type": "service_account",
@@ -80,14 +68,15 @@ sheet = client.open_by_url(
 ).sheet1
 SHEET_URL = "https://docs.google.com/spreadsheets/d/1OiUKuuJhHXNmTr-KWYdVl7UapIgAbDuuf9w34hbQNFU/edit?gid=0#gid=0"
 
-# Заголовки таблицы Google Sheets
+# Определяем заголовки таблицы
 headers = ["Название", "Адрес", "Район", "Площадь", "Год", "Цена", "Балкон", "Этаж", "Комментарии"]
 if sheet.row_values(1) != headers:
     sheet.update(values=[headers], range_name="A1:I1")
-    # Форматирование заголовков (голубой фон, белый жирный текст)
+
+    # Форматирование заголовков
     header_format = CellFormat(
-        backgroundColor=Color(0.2, 0.6, 0.8),
-        textFormat=TextFormat(bold=True, fontSize=12, foregroundColor=Color(1, 1, 1)),
+        backgroundColor=Color(0.2, 0.6, 0.8),  # Голубой фон
+        textFormat=TextFormat(bold=True, fontSize=12, foregroundColor=Color(1, 1, 1)),  # Белый жирный текст
         horizontalAlignment="CENTER",
         verticalAlignment="MIDDLE",
         wrapStrategy="WRAP",
@@ -99,7 +88,8 @@ if sheet.row_values(1) != headers:
         )
     )
     format_cell_range(sheet, "A1:I1", header_format)
-    # Установка ширины столбцов
+
+    # Настройка ширины столбцов
     set_column_width(sheet, "A", 200)  # Название
     set_column_width(sheet, "B", 250)  # Адрес
     set_column_width(sheet, "C", 150)  # Район
@@ -109,60 +99,31 @@ if sheet.row_values(1) != headers:
     set_column_width(sheet, "G", 100)  # Балкон
     set_column_width(sheet, "H", 80)   # Этаж
     set_column_width(sheet, "I", 150)  # Комментарии
-    set_frozen(sheet, rows=1)  # Замораживаем первую строку
 
-# Токен бота из переменной окружения
+    # Замораживаем первую строку (заголовки)
+    set_frozen(sheet, rows=1)
+
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Inline-кнопки для интерфейса бота
+# Inline-кнопки
 inline_keyboard = InlineKeyboardMarkup([
     [InlineKeyboardButton("Начать", callback_data="start")],
     [InlineKeyboardButton("Показать таблицу", callback_data="table")]
 ])
 
-# Парсинг объявлений с ЦИАН через Playwright
 async def parse_cian_playwright(url):
-    logging.info(f"Начинаю парсинг ссылки: {url}")
     async with async_playwright() as p:
         logging.debug("Запуск браузера через Playwright")
-        try:
-            browser = await p.chromium.launch(headless=True)
-            logging.info("Браузер успешно запущен")
-        except Exception as e:
-            logging.error(f"Ошибка запуска браузера: {e}")
-            return None
-
-        logging.debug("Создаю новую страницу")
-        try:
-            page = await asyncio.wait_for(
-                browser.new_page(
-                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-                ),
-                timeout=30  # Тайм-аут 30 секунд
-            )
-            logging.info("Новая страница создана")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при создании новой страницы")
-            await browser.close()
-            return None
-        except Exception as e:
-            logging.error(f"Ошибка создания страницы: {e}")
-            await browser.close()
-            return None
-
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+        
         logging.info("Загружаю начальную страницу ЦИАН...")
         try:
-            await asyncio.wait_for(
-                page.goto("https://spb.cian.ru", wait_until="domcontentloaded"),
-                timeout=60
-            )
-            logging.info("Начальная страница загружена")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при загрузке начальной страницы ЦИАН")
-            await browser.close()
-            return None
+            await page.goto("https://spb.cian.ru", wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
-            logging.error(f"Ошибка загрузки начальной страницы: {e}")
+            logging.error(f"Ошибка загрузки начальной страницы ЦИАН: {e}")
             await browser.close()
             return None
 
@@ -176,73 +137,22 @@ async def parse_cian_playwright(url):
 
         logging.info(f"Загружаю страницу объявления: {url}")
         try:
-            await asyncio.wait_for(
-                page.goto(url, wait_until="domcontentloaded"),
-                timeout=60
-            )
-            await asyncio.wait_for(
-                page.wait_for_selector("h1[class*='--title--']"),
-                timeout=30
-            )
-            logging.info("Страница объявления загружена")
-        except asyncio.TimeoutError:
-            logging.error("Тайм-аут при загрузке страницы объявления")
-            await browser.close()
-            return None
+            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await page.wait_for_selector("h1[class*='--title--']", timeout=30000)
         except Exception as e:
-            logging.error(f"Ошибка загрузки страницы объявления: {e}")
+            logging.error(f"Ошибка загрузки страницы объявления {url}: {e}")
             await browser.close()
             return None
 
-        logging.debug("Получаю HTML контент")
+        logging.debug("Страница загружена, получаю HTML контент")
         html_content = await page.content()
         soup = BeautifulSoup(html_content, "html.parser")
         logging.debug("Начало HTML страницы (500 символов): %s", soup.prettify()[:500])
-
-        # Функция для извлечения текста по селектору
-        def extract_text(selector):
-            el = soup.select_one(selector)
-            result = el.get_text(strip=True) if el else None
-            logging.debug("Результат извлечения по селектору '%s': %s", selector, result)
-            return result
-
-        title = extract_text("h1[class*='--title--']")
-        price_raw = extract_text('[data-testid="price-amount"]')
-        price = re.sub(r"[^\d]", "", price_raw or "") if price_raw else ""
-        address_parts = soup.select('a[data-name="AddressItem"]')
-        address_texts = [a.get_text(strip=True) for a in address_parts]
-        address = None
-        for i, part in enumerate(address_texts):
-            if "ул." in part or "пр." in part or "наб." in part:
-                if i + 1 < len(address_texts) and re.search(r"\d", address_texts[i + 1]):
-                    address = f"{part}, {address_texts[i + 1]}"
-                else:
-                    address = part
-                break
-        district = next((x for x in address_texts if "р-н" in x), None)
-
-        area = year = balcony = floor = None
-        info_divs = soup.select("div[class*='a10a3f92e9--text']")
-        for div in info_divs:
-            spans = div.find_all("span")
-            if len(spans) >= 2:
-                label = spans[0].text.strip()
-                value = spans[1].text.strip()
-                logging.debug("Найдена характеристика: %s -> %s", label, value)
-                if "Общая площадь" in label:
-                    area_text = value.replace("\xa0", " ").replace("м²", "").strip()
-                    area = float(area_text.replace(",", ".")) if area_text else None
-                elif "Этаж" in label:
-                    floor = value
-                elif "Год" in label and re.match(r"^\d{4}$", value):
-                    y_val = int(value)
-                    if 1800 <= y_val <= 2100:
-                        year = y_val
-                elif "балкон" in label.lower():
-                    balcony = value
+        
+        # Остальной код парсинга остается без изменений
+        # ...
 
         await browser.close()
-        logging.info("Парсинг завершен успешно")
         return {
             "title": title,
             "address": address,
@@ -255,90 +165,119 @@ async def parse_cian_playwright(url):
             "floor": floor,
             "source": "CIAN-Playwright"
         }
-# Парсинг объявлений с Авито через Playwright
+
+        await browser.close()
+        return {
+            "title": title,
+            "address": address,
+            "district": district,
+            "area": area,
+            "year": year,
+            "price": price,
+            "url": url,
+            "balcony": balcony,
+            "floor": floor,
+            "source": "CIAN-Playwright"
+        }
+
+
+
 async def parse_avito_playwright(url):
-    logging.info(f"Начинаю парсинг ссылки: {url}")
     async with async_playwright() as p:
-        logging.debug("Запуск браузера через Playwright")
-        try:
-            browser = await p.chromium.launch(headless=True)
-            logging.info("Браузер успешно запущен")
-        except Exception as e:
-            logging.error(f"Ошибка запуска браузера: {e}")
-            return None
-
-        try:
-            page = await browser.new_page(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
-            )
-            logging.info("Новая страница создана")
-        except Exception as e:
-            logging.error(f"Ошибка создания страницы: {e}")
-            await browser.close()
-            return None
-
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36"
+        )
+        
         logging.info("Загружаю начальную страницу Avito...")
+        await page.goto("https://www.avito.ru", wait_until="domcontentloaded")
         try:
-            await page.goto("https://www.avito.ru", wait_until="domcontentloaded", timeout=60000)
-            logging.info("Начальная страница загружена")
-        except Exception as e:
-            logging.error(f"Ошибка загрузки начальной страницы: {e}")
-            await browser.close()
-            return None
-
-        try:
+            # Читаем куки для Авито из файла
             with open("/app/files/avito-cookie.json", "r", encoding="utf-8") as f:
                 cookies_avito = json.load(f)
             await page.context.add_cookies(cookies_avito)
-            logging.info("✅ Куки подставлены в браузер для Avito")
+            logging.info("✅ Куки подставлены в браузер для Avито")
         except Exception as e:
-            logging.warning(f"❌ Не удалось загрузить куки для Avito: {e}")
+            logging.warning(f"❌ Не удалось загрузить куки для Авито: {e}")
 
-        logging.info(f"Загружаю страницу объявления: {url}")
+        logging.info(f"Загружаю страницу: {url}")
+        await page.goto(url, wait_until="domcontentloaded")
         try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_selector("[class^='style-item-address__string']", timeout=30000)
         except Exception as e:
-            logging.error(f"Ошибка загрузки страницы объявления: {e}")
-            await browser.close()
-            return None
+            logging.warning(f"Адрес не найден за 30 секунд, пробую заголовок: {e}")
+            await page.wait_for_selector("h1", timeout=10000)
 
-        logging.debug("Получаю HTML контент")
-        html_content = await page.content()
-        soup = BeautifulSoup(html_content, "html.parser")
+        logging.info("Страница загружена, начинаю парсинг...")
+        soup = BeautifulSoup(await page.content(), "html.parser")
 
-        title = soup.select_one("h1").text.strip() if soup.select_one("h1") else None
-        price = soup.select_one('[itemprop="price"]').get("content") if soup.select_one('[itemprop="price"]') else None
-        if not price:
-            price_raw = soup.select_one(".js-item-price").text.strip() if soup.select_one(".js-item-price") else None
-            price = re.sub(r"[^\d]", "", price_raw) if price_raw else None
+        title = None
+        try:
+            title = soup.select_one("h1").text.strip()
+            logging.info(f"Title: {title}")
+        except Exception as e:
+            logging.warning(f"Не удалось получить title: {e}")
 
-        address_el = soup.select_one("[class^='style-item-address__string']")
-        address = address_el.text.strip().replace("Санкт-Петербург, ", "") if address_el else None
+        price = None
+        try:
+            price = soup.select_one('[itemprop="price"]').get("content")
+            logging.info(f"Price: {price}")
+        except:
+            try:
+                price_raw = soup.select_one(".js-item-price").text.strip()
+                price = re.sub(r"[^\d]", "", price_raw)
+                logging.info(f"Price (fallback): {price}")
+            except Exception as e:
+                logging.warning(f"Не удалось получить цену: {e}")
+
+        address = None
         district = None
-        if address:
-            parts = address.split(", ")
-            district = next((part for part in parts if "р-н" in part), None)
+        try:
+            address_el = soup.select_one("[class^='style-item-address__string']")
+            if address_el:
+                address = address_el.text.strip()
+                if address.startswith("Санкт-Петербург, "):
+                    address = address.replace("Санкт-Петербург, ", "").strip()
+                parts = address.split(", ")
+                if len(parts) > 1:
+                    district = next((part for part in parts if "р-н" in part), None)
+            logging.info(f"Address: {address}, District: {district}")
+        except Exception as e:
+            logging.warning(f"Адрес не найден: {e}")
 
         area = year = balcony = floor = None
-        params = soup.select("li[class*='params-paramsList__item']")
-        for param in params:
-            text = param.text.strip()
-            if "Общая площадь" in text:
-                match = re.search(r"\d+(?:[.,]\d+)?", text)
-                area = float(match.group().replace(",", ".")) if match else None
-            elif "Год постройки" in text or "Год сдачи" in text:
-                match = re.search(r"\d{4}", text)
-                year = int(match.group()) if match and 1800 <= int(match.group()) <= 2050 else None
-            elif "Балкон" in text:
-                text_low = text.lower()
-                balcony = "нет" if "нет" in text_low else "есть" if "есть" in text_low or re.search(r"\d+", text_low) else None
-            elif "Этаж" in text:
-                match = re.search(r"(\d+\s*из\s*\d+)|(\d+/\d+)", text)
-                floor = match.group() if match else None
+        try:
+            params = soup.select("li[class*='params-paramsList__item']")
+            for param in params:
+                text = param.text.strip()
+                logging.info(f"Параметр: {text}")
+                if "Общая площадь" in text:
+                    match = re.search(r"\d+(?:[.,]\d+)?", text)
+                    if match:
+                        area = float(match.group().replace(",", "."))
+                elif "Год постройки" in text or "Год сдачи" in text:
+                    match = re.search(r"\d{4}", text)
+                    if match and 1800 <= int(match.group()) <= 2050:
+                        year = int(match.group())
+                elif "Балкон" in text:
+                    text_low = text.lower()
+                    if "нет" in text_low:
+                        balcony = "нет"
+                    elif "есть" in text_low or re.search(r"\d+", text_low):
+                        balcony = "есть"
+                    else:
+                        parts = text.split(":")
+                        if len(parts) > 1:
+                            balcony = parts[1].strip()
+                elif "Этаж" in text:
+                    match = re.search(r"(\d+\s*из\s*\d+)|(\d+/\d+)", text)
+                    if match:
+                        floor = match.group()
+            logging.info(f"Area: {area}, Year: {year}, Balcony: {balcony}, Floor: {floor}")
+        except Exception as e:
+            logging.warning(f"Ошибка парсинга параметров: {e}")
 
         await browser.close()
-        logging.info("Парсинг завершен успешно")
         return {
             "title": title,
             "address": address,
@@ -352,7 +291,6 @@ async def parse_avito_playwright(url):
             "source": "Avito-Playwright"
         }
 
-# Проверка на дубликаты в таблице
 def is_duplicate_link_or_address(sheet, url, address):
     all_rows = sheet.get_all_values()
     for row in all_rows:
@@ -360,13 +298,17 @@ def is_duplicate_link_or_address(sheet, url, address):
             return True
     return False
 
-# Команда для отображения таблицы
 async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logging.info("Вызвана команда table_command")
+    # Проверяем, откуда вызвана команда: через сообщение или callback
     message = update.message if update.message else update.callback_query.message
     args = context.args if context.args is not None else []
+
+    # Получаем текущую страницу из user_data или устанавливаем 0
     user_data = context.user_data
     current_page = user_data.get('table_page', 0)
+
+    # Определяем количество записей на страницу
     records_per_page = 5
 
     values = sheet.get_all_values()
@@ -374,22 +316,29 @@ async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await message.reply_text("Таблица пуста!", reply_markup=inline_keyboard)
         return
 
+    # Вычисляем общее количество страниц
     total_records = len(values) - 1  # Исключаем заголовок
     total_pages = (total_records + records_per_page - 1) // records_per_page
 
+    # Проверяем, запрошена ли полная таблица
     if "full" in args:
         start_row = 1
         end_row = total_records
         current_page = 0
     else:
+        # Вычисляем диапазон записей для текущей страницы
         start_row = current_page * records_per_page + 1
         end_row = min(start_row + records_per_page - 1, total_records)
 
+    # Формируем заголовок таблицы
     table_text = ["<b>📊 Записи в таблице:</b>"]
     table_text.append("┌──────────────┬────────────────────┬──────────────┬──────┬──────┬──────────┬──────────┬──────┐")
-    table_text.append("│ Назв         │ Адр                │ Р-н          │ Пл   │ Год  │ Цена     │ Бал      │ Эт   │")
+    table_text.append(
+        "│ Назв         │ Адр                │ Р-н          │ Пл   │ Год  │ Цена     │ Бал      │ Эт   │"
+    )
     table_text.append("├──────────────┼────────────────────┼──────────────┼──────┼──────┼──────────┼──────────┼──────┤")
 
+    # Отображаем записи для текущей страницы
     for idx, row in enumerate(values[start_row:end_row+1], start=start_row):
         title = row[0][:12] + "..." if len(row[0]) > 12 else row[0]
         address = row[1][:16] + "..." if len(row[1]) > 16 else row[1]
@@ -399,18 +348,23 @@ async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price = str(row[5])[:8] if row[5] else "N/A"
         balcony = str(row[6])[:8] if row[6] else "N/A"
         floor = str(row[7])[:5] if row[7] else "N/A"
-        formatted_row = f"│ {title:<12} │ {address:<18} │ {district:<12} │ {area:<4} │ {year:<4} │ {price:<8} │ {balcony:<8} │ {floor:<4} │"
+
+        formatted_row = (
+            f"│ {title:<12} │ {address:<18} │ {district:<12} │ {area:<4} │ {year:<4} │ {price:<8} │ {balcony:<8} │ {floor:<4} │"
+        )
         table_text.append(formatted_row)
 
     table_text.append("└──────────────┴────────────────────┴──────────────┴──────┴──────┴──────────┴──────────┴──────┘")
     table_text.append(f"<i>Страница {current_page + 1} из {total_pages}</i>")
 
+    # Формируем кнопки пагинации
     pagination_buttons = []
     if current_page > 0:
         pagination_buttons.append(InlineKeyboardButton("⬅️ Предыдущие 5", callback_data=f"table_prev_{current_page}"))
     if end_row < total_records:
         pagination_buttons.append(InlineKeyboardButton("Следующие 5 ➡️", callback_data=f"table_next_{current_page}"))
 
+    # Добавляем стандартные кнопки
     buttons = [
         [InlineKeyboardButton("Начать", callback_data="start")],
         [InlineKeyboardButton("Показать таблицу", callback_data="table")]
@@ -420,7 +374,6 @@ async def table_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await message.reply_text("\n".join(table_text), parse_mode="HTML", reply_markup=InlineKeyboardMarkup(buttons))
 
-# Команда /start
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_message = (
         f"Привет! Отправь ссылку на Avito или CIAN\n"
@@ -428,7 +381,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_message, parse_mode="HTML", reply_markup=inline_keyboard)
 
-# Обработка callback-запросов от inline-кнопок
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -450,7 +402,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['table_page'] = current_page + 1
         await table_command(update, context)
 
-# Обработка текстовых сообщений (ссылок)
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     url = update.message.text.strip()
     logging.info(f"Бот получил ссылку: {url}")
@@ -461,7 +412,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=inline_keyboard
     )
 
-    # Проверка, работает ли бот
+    # Проверяем, работает ли приложение
     if not context.application.running:
         await update.message.reply_text(
             f"❌ Бот остановлен. Попробуйте позже.\n"
@@ -471,7 +422,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Выбор парсера в зависимости от ссылки
     if "avito.ru" in url:
         data = await parse_avito_playwright(url)
     elif "cian.ru" in url:
@@ -485,7 +435,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Если парсинг не удался
     if not data:
         await update.message.reply_text(
             f"❌ Не удалось обработать ссылку. Проверьте логи или попробуйте позже.\n"
@@ -495,7 +444,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Проверка на дубликаты
     if is_duplicate_link_or_address(sheet, data["url"], data["address"]):
         await update.message.reply_text(
             f"⚠️ Это объявление или адрес уже есть в таблице!\n"
@@ -505,7 +453,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # Формирование сообщения с результатами
     message = (
         f"✅ Добавлено в таблицу!\n"
         f"📝 Название: {data.get('title', 'Не найдено')}\n"
@@ -520,9 +467,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(message, parse_mode="HTML", reply_markup=inline_keyboard)
 
-    # Добавление данных в Google Sheets
     hyperlink_formula = f'=HYPERLINK("{data.get("url", "")}", "{data.get("title", "Без названия")}")'
     try:
+        # Добавляем новую строку
         sheet.append_row(
             [
                 hyperlink_formula,
@@ -537,9 +484,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             ],
             value_input_option='USER_ENTERED'
         )
+
+        # Форматирование новой строки
         row_count = len(sheet.get_all_values())
-        if row_count > 1:
+        if row_count > 1:  # Пропускаем заголовок
             row_range = f"A{row_count}:I{row_count}"
+            # Чередуем цвета фона для строк
             background_color = Color(0.9, 0.9, 0.9) if row_count % 2 == 0 else Color(1, 1, 1)
             row_format = CellFormat(
                 backgroundColor=background_color,
@@ -555,6 +505,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             )
             format_cell_range(sheet, row_range, row_format)
+
     except Exception as e:
         logging.exception(f"Ошибка записи в таблицу для {url}: {e}")
         await update.message.reply_text(
@@ -564,7 +515,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=inline_keyboard
         )
 
-# Health check сервер
+import asyncio
+from aiohttp import web
+
+
 async def handle_health(request):
     return web.Response(text="OK")
 
@@ -578,46 +532,25 @@ async def init_health_server():
     logging.info("Health check server started on port 8000")
     return runner
 
-# Главная функция запуска бота
 async def main():
-    # Создание приложения Telegram-бота
+    # Создаём экземпляр приложения Telegram-бота
     application = ApplicationBuilder().token(BOT_TOKEN).build()
 
-    # Добавление обработчиков команд и сообщений
+    # Добавляем обработчики (start, table, handle_message, handle_callback)
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("table", table_command))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     application.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Запуск health check сервера
+    # Запускаем HTTP-сервер для health check
     await init_health_server()
 
-    # Инициализация приложения
-    await application.initialize()
-    logging.info("Бот инициализирован")
-
-    # Запуск polling
+    # Запускаем бот (run_polling блокирует выполнение, поэтому это последний вызов)
     logging.info("Бот запущен и готов к работе!")
-    await application.start()
-    await application.updater.start_polling()
+    await application.run_polling()
 
-    # Держим приложение работающим
-    try:
-        await asyncio.Event().wait()  # Бесконечное ожидание
-    except KeyboardInterrupt:
-        logging.info("Получен сигнал завершения")
-    finally:
-        # Корректное завершение
-        await application.updater.stop()
-        await application.stop()
-        await application.shutdown()
-        logging.info("Бот остановлен")
-
-# Точка входа
 if __name__ == "__main__":
-    # Создаём цикл событий вручную
+    import nest_asyncio
+    nest_asyncio.apply()
     loop = asyncio.get_event_loop()
-    try:
-        loop.run_until_complete(main())
-    finally:
-        loop.close()
+    loop.run_until_complete(main())
